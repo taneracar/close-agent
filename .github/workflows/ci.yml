@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Claude model id for a real eval run (spends API credits)"
+        required: false
+        default: ""
+      trials:
+        description: "Trials per case"
+        required: false
+        default: "3"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e '.[dev]'
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: pytest -q
+
+  eval-offline:
+    # Exercises the harness and graders with the scripted FAKE model. Not a model-quality score.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e .
+      - run: python -m close_agent eval --model scripted --out eval-results
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-scripted
+          path: eval-results/
+
+  eval-claude:
+    # Manual only: runs the same cases against a real Claude model. Needs the ANTHROPIC_API_KEY secret.
+    if: github.event_name == 'workflow_dispatch' && inputs.model != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e .
+      - run: python -m close_agent eval --model "${{ inputs.model }}" --trials "${{ inputs.trials }}" --min-pass 0 --out eval-results
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-${{ inputs.model }}
+          path: eval-results/
